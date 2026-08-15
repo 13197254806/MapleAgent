@@ -57,6 +57,7 @@ class MySQLPersistence:
 
     async def start(self) -> None:
         if not self.config.enabled:
+            LOGGER.info("MySQL persistence disabled")
             return
         self._executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="maple-agent-mysql"
@@ -69,6 +70,12 @@ class MySQLPersistence:
             self._executor = None
             raise
         self._started = True
+        LOGGER.info(
+            "MySQL persistence connected host=%s port=%s database=%s",
+            self.config.host,
+            self.config.port,
+            self.config.database,
+        )
         self._worker_task = asyncio.create_task(
             self._worker(), name="mysql-persistence-writer"
         )
@@ -86,6 +93,7 @@ class MySQLPersistence:
         self._executor = None
         self._worker_task = None
         self._started = False
+        LOGGER.info("MySQL persistence stopped")
 
     def open_session(
         self,

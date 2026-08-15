@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from ..perception import Perception
 from ..persistence import MySQLPersistence
 from .session import SessionManager
 
+LOGGER = logging.getLogger(__name__)
+
 
 def create_app(config: ServerAppConfig) -> FastAPI:
     map_service = MapService.load(config.map.path, config.map.node_snap_distance)
@@ -22,16 +25,25 @@ def create_app(config: ServerAppConfig) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        LOGGER.info(
+            "initializing server database=%s discovery=%s recordings=%s",
+            "enabled" if config.database.enabled else "disabled",
+            "enabled" if config.discovery.enabled else "disabled",
+            config.recorder.root_dir,
+        )
         await database.start()
+        LOGGER.info("database state: %s", database.health)
         try:
             if config.discovery.enabled:
                 await discovery.start()
             try:
+                LOGGER.info("server application ready")
                 yield
             finally:
                 discovery.close()
         finally:
             await database.close()
+            LOGGER.info("server application stopped")
 
     app = FastAPI(title="MapleBot V1", version="0.1.0", lifespan=lifespan)
     app.state.config = config

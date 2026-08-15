@@ -124,6 +124,10 @@ class ActionType(StrEnum):
     KEY_DOWN = "key_down"
     KEY_UP = "key_up"
     KEY_TAP = "key_tap"
+    MOUSE_MOVE = "mouse_move"
+    MOUSE_DOWN = "mouse_down"
+    MOUSE_UP = "mouse_up"
+    MOUSE_CLICK = "mouse_click"
     WAIT = "wait"
     RELEASE_ALL = "release_all"
 
@@ -131,6 +135,10 @@ class ActionType(StrEnum):
 class Action(WireModel):
     type: ActionType
     key: str | None = None
+    button: Literal["LEFT", "RIGHT", "MIDDLE"] | None = None
+    # Normalized coordinates within the target window's client area.
+    x: float | None = Field(default=None, ge=0, le=1)
+    y: float | None = Field(default=None, ge=0, le=1)
     duration_ms: int | None = Field(default=None, ge=0, le=1000)
 
     @field_validator("key")
@@ -139,15 +147,34 @@ class Action(WireModel):
         return value.upper() if value else None
 
     def model_post_init(self, __context: Any, /) -> None:
-        needs_key = self.type in {
+        key_action = self.type in {
             ActionType.KEY_DOWN,
             ActionType.KEY_UP,
             ActionType.KEY_TAP,
         }
-        if needs_key and not self.key:
+        mouse_action = self.type in {
+            ActionType.MOUSE_MOVE,
+            ActionType.MOUSE_DOWN,
+            ActionType.MOUSE_UP,
+            ActionType.MOUSE_CLICK,
+        }
+        button_action = self.type in {
+            ActionType.MOUSE_DOWN,
+            ActionType.MOUSE_UP,
+            ActionType.MOUSE_CLICK,
+        }
+        if key_action and not self.key:
             raise ValueError(f"{self.type} requires key")
-        if not needs_key and self.key is not None:
+        if not key_action and self.key is not None:
             raise ValueError(f"{self.type} does not accept key")
+        if button_action and self.button is None:
+            raise ValueError(f"{self.type} requires button")
+        if not button_action and self.button is not None:
+            raise ValueError(f"{self.type} does not accept button")
+        if mouse_action and (self.x is None or self.y is None):
+            raise ValueError(f"{self.type} requires x and y")
+        if not mouse_action and (self.x is not None or self.y is not None):
+            raise ValueError(f"{self.type} does not accept x or y")
         if self.type == ActionType.WAIT and self.duration_ms is None:
             raise ValueError("wait requires duration_ms")
         if self.type != ActionType.WAIT and self.duration_ms is not None:

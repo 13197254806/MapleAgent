@@ -1,19 +1,19 @@
 # MapleBot V1
 
-这是一个面向单客户端、单角色、单张固定地图的 CV 控制闭环原型。它只读取窗口画面并通过 Windows 标准键盘输入执行短时动作，不读取游戏内存、不注入进程、不修改网络封包，也不提供反作弊绕过。
+这是一个面向单客户端、单角色、单张固定地图的 CV 控制闭环原型。它只读取窗口画面并通过 Win32 窗口消息执行短时动作，不读取游戏内存、不注入进程、不修改网络封包，也不提供反作弊绕过。
 
 > 使用前请确认目标游戏和服务器规则允许自动化。建议先在可控测试环境中完成模板、ROI、按键和地图标定；首次联调将 `control.mode` 设为 `mapping`。
 
 ## 已实现的 V1 链路
 
-- Windows 指定窗口客户区捕获、固定分辨率缩放和 JPEG 编码（10～15 FPS 可配）。
+- Windows 按进程名定位主窗口，后台客户区捕获、固定分辨率缩放和 JPEG 编码（10～15 FPS 可配）。
 - 单 WebSocket 二进制帧协议；消息均带 `session_id`、单调序号和毫秒时间戳。
 - FastAPI 单会话服务端，模板匹配和通用 YOLO 风格 ONNX 适配器。
 - 小地图玩家色点、HP/MP 色条、角色/怪物/死亡/阻塞 UI 检测。
 - 连续帧中值平滑、识别丢失计数、位置不变检测和最近地图节点定位。
 - `INIT / MAPPING / PATROL / COMBAT / RECOVER / STOPPED` 状态机。
 - 图结构固定地图、相邻边导航、固定巡逻路线和基础距离战斗。
-- 100～800 ms 短时动作计划、白名单输入、ACK 和单未决计划约束。
+- 100～800 ms 短时动作计划、定向窗口键盘/鼠标白名单输入、ACK 和单未决计划约束。
 - 客户端 watchdog、服务端 heartbeat timeout、过期计划拒绝及 F12 紧急停止。
 - 完整会话 Recorder、Mapping Mode 候选图和离线 Replay 差异报告。
 
@@ -60,7 +60,7 @@ conda env update -n maple_agent -f environment.yml --prune
 python -m pip install -e ".[onnx]"
 ```
 
-客户端依赖 `mss`，窗口必须处于可见状态；V1 不尝试捕获被完全遮挡或最小化的硬件加速画面。
+默认后台捕获使用系统 `PrintWindow`，不依赖 `mss`；只有将 `capture_backend` 切换为 `screen` 时才使用 `mss`。
 
 ## 配置
 
@@ -72,11 +72,29 @@ python -m pip install -e ".[onnx]"
 首次运行至少修改：
 
 1. 客户端保持 `client.server_url: null`，自动发现局域网服务端。
-2. 客户端 `window_title` 和 `input.bindings` 与实际游戏一致。
+2. 客户端 `process_name` 与任务管理器中的进程名一致（`.exe` 可省略），当前默认为 `Maplestory_Classic`；仅当该进程有多个窗口时才配置 `window_title`。
 3. 两个配置文件的 `frame.width / height / max_bytes` 必须一致。
 4. 服务端 `perception.rois` 使用归一化坐标标定小地图、HP、MP。
 5. 服务端调整 HSV 范围和模板阈值。OpenCV HSV 范围为 H `0～180`、S/V `0～255`。
 6. 首次采集将服务端 `control.mode` 改成 `mapping`。
+
+默认后台控制配置如下：
+
+```yaml
+client:
+  process_name: Maplestory_Classic
+  window_title: null
+  capture_backend: print_window
+
+input:
+  allowed_mouse_buttons: [LEFT]
+```
+
+客户端按进程找到其最大的可见顶层窗口。`print_window` 可在窗口被其他窗口遮挡、游戏不在前台时请求客户区图像；窗口消息输入只投递给这个窗口句柄，不会移动真实鼠标，也不会把按键发送给当前正在使用的其他窗口。鼠标动作使用目标客户区归一化坐标，例如 `(0.5, 0.5)` 表示中心位置。
+
+当前巡逻和战斗 FSM 仍只生成键盘动作；协议和客户端已经支持 `mouse_move / mouse_down / mouse_up / mouse_click`，供后续阻塞窗口处理等明确场景使用。鼠标按钮仍受 `allowed_mouse_buttons` 白名单限制。
+
+需要注意：后台窗口捕获和窗口消息输入都依赖游戏自身对 Win32 消息的支持。某些 DirectX 渲染器会让 `PrintWindow` 返回黑帧，某些使用 Raw Input/DirectInput 的游戏会忽略 `PostMessage` 键鼠消息；系统不会为此切换到全局输入，也不会注入进程。如果实际游戏出现这种情况，可用 `capture_backend: screen` 验证感知，但该模式要求窗口可见且不能被遮挡。最小化窗口是否仍能正常渲染也由游戏决定，推荐仅让它保持非前台而不要最小化。如果游戏以管理员身份运行，客户端也必须以相同权限运行，否则 Windows 的消息隔离可能拒绝投递。
 
 模板使用固定分辨率截图裁剪，文件名必须以类别开头，例如：
 
@@ -141,6 +159,31 @@ python -m maplebot.client
 
 高级排查时仍可用 `--config` 指向其他文件，但日常启动不需要任何参数。健康检查 `GET http://服务端地址:8765/health` 会同时返回服务发现和数据库连接状态。
 
+## 服务端日志
+
+服务端启动后同时输出控制台日志，并默认写入 `logs/server.log`。日志采用轮转文件，单文件 10 MB、保留 5 个历史文件，记录以下关键内容：
+
+- 服务端启动、就绪和停止；
+- MySQL、局域网发现的启动和异常；
+- 客户端连接、拒绝、断开和会话目录；
+- FSM 状态切换及对应意图；
+- 心跳超时、过期帧、客户端错误、计划异常 ACK；
+- 未处理的会话异常及堆栈。
+
+配置位于 `configs/server.yaml`：
+
+```yaml
+logging:
+  level: INFO
+  console: true
+  file: ../logs/server.log
+  max_bytes: 10000000
+  backup_count: 5
+  access_log: false
+```
+
+逐个 ActionPlan 的下发记录使用 `DEBUG` 级别，避免默认日志在 10～15 FPS 下快速膨胀。需要排查控制细节时临时将 `level` 改为 `DEBUG`；HTTP 访问日志可通过 `access_log` 单独打开。
+
 ## 局域网服务发现
 
 服务端 `configs/server.yaml`：
@@ -195,7 +238,7 @@ V1 只接受第一个名称匹配的服务端，服务发现本身不提供身�
 
 本地紧急停止键默认为 `F12`。触发后客户端立即释放所有由本程序按下的键，并结束当前控制连接。连接断开、服务端超过 1 秒没有响应或执行异常时也会释放按键。
 
-默认 `input.require_game_foreground: true`。游戏窗口失去前台焦点时，客户端会拒绝或中断计划并释放按键，避免输入落到其他应用。
+输入通过目标窗口句柄投递，不再要求游戏位于前台。F12 仍使用系统级按键状态检测，所以无论当前正在使用哪个窗口都可以紧急停止；停止时会向游戏窗口补发所有已按下键和鼠标按钮的释放消息。
 
 ## Mapping Mode
 

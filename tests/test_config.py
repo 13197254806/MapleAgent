@@ -9,9 +9,13 @@ def test_split_default_configs_load_from_project() -> None:
     client = load_client_config()
     server = load_server_config()
     assert client.frame.width == server.frame.width == 1280
+    assert client.client.process_name == "Maplestory_Classic"
+    assert client.client.capture_backend == "print_window"
     assert client.discovery.service_name == server.discovery.service_name
     assert server.map.path.name == "example_map.json"
     assert server.recorder.root_dir.name == "recordings"
+    assert server.logging.file is not None
+    assert server.logging.file.name == "server.log"
 
 
 def test_database_password_comes_from_environment(

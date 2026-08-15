@@ -4,12 +4,37 @@ import ctypes
 import sys
 import threading
 from contextlib import suppress
+from ctypes import wintypes
 from dataclasses import dataclass
 
 import cv2
 import numpy as np
 
 from ..clock import epoch_ms
+from .window import TargetWindow
+
+
+class BitmapInfoHeader(ctypes.Structure):
+    _fields_ = [
+        ("biSize", ctypes.c_uint32),
+        ("biWidth", ctypes.c_int32),
+        ("biHeight", ctypes.c_int32),
+        ("biPlanes", ctypes.c_uint16),
+        ("biBitCount", ctypes.c_uint16),
+        ("biCompression", ctypes.c_uint32),
+        ("biSizeImage", ctypes.c_uint32),
+        ("biXPelsPerMeter", ctypes.c_int32),
+        ("biYPelsPerMeter", ctypes.c_int32),
+        ("biClrUsed", ctypes.c_uint32),
+        ("biClrImportant", ctypes.c_uint32),
+    ]
+
+
+class BitmapInfo(ctypes.Structure):
+    _fields_ = [
+        ("bmiHeader", BitmapInfoHeader),
+        ("bmiColors", ctypes.c_uint32 * 3),
+    ]
 
 
 @dataclass(frozen=True)
@@ -22,27 +47,71 @@ class CapturedFrame:
 
 
 class WindowCapture:
-    """Captures the visible Win32 client area and scales it to the wire resolution."""
+    """Capture a process-owned Win32 client area without requiring foreground focus."""
+
+    PW_CLIENTONLY = 0x00000001
+    PW_RENDERFULLCONTENT = 0x00000002
+    DIB_RGB_COLORS = 0
+    BI_RGB = 0
 
     def __init__(
-        self, title_substring: str, width: int, height: int, jpeg_quality: int
+        self,
+        target: TargetWindow,
+        width: int,
+        height: int,
+        jpeg_quality: int,
+        backend: str = "print_window",
     ):
         if sys.platform != "win32":
             raise RuntimeError("the capture client only runs on Windows")
-        try:
-            import mss
-        except ImportError as exc:  # pragma: no cover - Windows-only dependency
-            raise RuntimeError(
-                "install the 'client' extra to capture a window"
-            ) from exc
-        self._mss_factory = mss.mss
-        self._mss_by_thread: dict[int, object] = {}
-        self._title = title_substring.casefold()
+        self.target = target
         self._target_width = width
         self._target_height = height
         self._jpeg_quality = jpeg_quality
+        self._backend = backend
         self._user32 = ctypes.windll.user32
-        self._hwnd: int | None = None
+        self._gdi32 = ctypes.windll.gdi32
+        self._user32.GetDC.argtypes = [wintypes.HWND]
+        self._user32.GetDC.restype = wintypes.HDC
+        self._user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+        self._user32.PrintWindow.argtypes = [
+            wintypes.HWND,
+            wintypes.HDC,
+            wintypes.UINT,
+        ]
+        self._user32.PrintWindow.restype = wintypes.BOOL
+        self._gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+        self._gdi32.CreateCompatibleDC.restype = wintypes.HDC
+        self._gdi32.CreateCompatibleBitmap.argtypes = [
+            wintypes.HDC,
+            ctypes.c_int,
+            ctypes.c_int,
+        ]
+        self._gdi32.CreateCompatibleBitmap.restype = wintypes.HBITMAP
+        self._gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+        self._gdi32.SelectObject.restype = wintypes.HGDIOBJ
+        self._gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+        self._gdi32.DeleteDC.argtypes = [wintypes.HDC]
+        self._gdi32.GetDIBits.argtypes = [
+            wintypes.HDC,
+            wintypes.HBITMAP,
+            wintypes.UINT,
+            wintypes.UINT,
+            wintypes.LPVOID,
+            ctypes.POINTER(BitmapInfo),
+            wintypes.UINT,
+        ]
+        self._gdi32.GetDIBits.restype = ctypes.c_int
+        self._mss_factory = None
+        self._mss_by_thread: dict[int, object] = {}
+        if backend == "screen":
+            try:
+                import mss
+            except ImportError as exc:  # pragma: no cover - Windows-only dependency
+                raise RuntimeError(
+                    "install the 'client' extra to use screen capture"
+                ) from exc
+            self._mss_factory = mss.mss
         try:
             self._user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
         except (AttributeError, OSError):
@@ -50,19 +119,12 @@ class WindowCapture:
                 self._user32.SetProcessDPIAware()
 
     def capture(self) -> CapturedFrame:
-        hwnd = self._find_window()
-        left, top, right, bottom = self._client_rect(hwnd)
-        if right <= left or bottom <= top:
-            raise RuntimeError("game window client area is empty or minimized")
-        thread_id = threading.get_ident()
-        capture = self._mss_by_thread.get(thread_id)
-        if capture is None:
-            capture = self._mss_factory()
-            self._mss_by_thread[thread_id] = capture
-        shot = capture.grab(
-            {"left": left, "top": top, "width": right - left, "height": bottom - top}
-        )
-        frame = np.asarray(shot, dtype=np.uint8)[:, :, :3]
+        hwnd = self.target.hwnd
+        window_rect = self.target.client_screen_rect()
+        if self._backend == "print_window":
+            frame = self._capture_window(hwnd)
+        else:
+            frame = self._capture_screen(window_rect)
         if (frame.shape[1], frame.shape[0]) != (
             self._target_width,
             self._target_height,
@@ -81,61 +143,73 @@ class WindowCapture:
             captured_at_ms=epoch_ms(),
             width=self._target_width,
             height=self._target_height,
-            window_rect=(left, top, right, bottom),
+            window_rect=window_rect,
             jpeg=encoded.tobytes(),
         )
 
-    def _find_window(self) -> int:
-        from ctypes import wintypes
+    def _capture_window(self, hwnd: int) -> np.ndarray:
+        width, height = self.target.client_size()
+        if width <= 0 or height <= 0:
+            raise RuntimeError("game window client area is empty")
+        window_dc = self._user32.GetDC(hwnd)
+        if not window_dc:
+            raise ctypes.WinError()
+        memory_dc = self._gdi32.CreateCompatibleDC(window_dc)
+        bitmap = self._gdi32.CreateCompatibleBitmap(window_dc, width, height)
+        if not memory_dc or not bitmap:
+            if memory_dc:
+                self._gdi32.DeleteDC(memory_dc)
+            if bitmap:
+                self._gdi32.DeleteObject(bitmap)
+            self._user32.ReleaseDC(hwnd, window_dc)
+            raise ctypes.WinError()
+        old_object = self._gdi32.SelectObject(memory_dc, bitmap)
+        try:
+            flags = self.PW_CLIENTONLY | self.PW_RENDERFULLCONTENT
+            if not self._user32.PrintWindow(hwnd, memory_dc, flags):
+                raise RuntimeError(
+                    "PrintWindow failed; this renderer may not support background capture"
+                )
+            info = BitmapInfo()
+            info.bmiHeader.biSize = ctypes.sizeof(BitmapInfoHeader)
+            info.bmiHeader.biWidth = width
+            info.bmiHeader.biHeight = -height
+            info.bmiHeader.biPlanes = 1
+            info.bmiHeader.biBitCount = 32
+            info.bmiHeader.biCompression = self.BI_RGB
+            pixels = ctypes.create_string_buffer(width * height * 4)
+            rows = self._gdi32.GetDIBits(
+                memory_dc,
+                bitmap,
+                0,
+                height,
+                pixels,
+                ctypes.byref(info),
+                self.DIB_RGB_COLORS,
+            )
+            if rows != height:
+                raise RuntimeError(f"GetDIBits returned {rows} of {height} rows")
+            bgra = np.frombuffer(pixels, dtype=np.uint8).reshape(height, width, 4)
+            return bgra[:, :, :3].copy()
+        finally:
+            self._gdi32.SelectObject(memory_dc, old_object)
+            self._gdi32.DeleteObject(bitmap)
+            self._gdi32.DeleteDC(memory_dc)
+            self._user32.ReleaseDC(hwnd, window_dc)
 
-        if (
-            self._hwnd
-            and self._user32.IsWindow(self._hwnd)
-            and self._user32.IsWindowVisible(self._hwnd)
-            and not self._user32.IsIconic(self._hwnd)
-        ):
-            return self._hwnd
-        matches: list[int] = []
-        callback_type = ctypes.WINFUNCTYPE(
-            ctypes.c_bool, wintypes.HWND, wintypes.LPARAM
+    def _capture_screen(self, rect: tuple[int, int, int, int]) -> np.ndarray:
+        if self.target.is_minimized():
+            raise RuntimeError("screen capture cannot capture a minimized game window")
+        left, top, right, bottom = rect
+        if right <= left or bottom <= top:
+            raise RuntimeError("game window client area is empty")
+        thread_id = threading.get_ident()
+        capture = self._mss_by_thread.get(thread_id)
+        if capture is None:
+            assert self._mss_factory is not None
+            capture = self._mss_factory()
+            self._mss_by_thread[thread_id] = capture
+        shot = capture.grab(
+            {"left": left, "top": top, "width": right - left, "height": bottom - top}
         )
-
-        @callback_type
-        def callback(hwnd: int, _lparam: int) -> bool:
-            if not self._user32.IsWindowVisible(hwnd):
-                return True
-            if self._user32.IsIconic(hwnd):
-                return True
-            length = self._user32.GetWindowTextLengthW(hwnd)
-            if length <= 0:
-                return True
-            buffer = ctypes.create_unicode_buffer(length + 1)
-            self._user32.GetWindowTextW(hwnd, buffer, length + 1)
-            if self._title in buffer.value.casefold():
-                matches.append(hwnd)
-            return True
-
-        self._user32.EnumWindows(callback, 0)
-        if not matches:
-            raise RuntimeError(f"no visible window title contains {self._title!r}")
-        self._hwnd = matches[0]
-        return self._hwnd
-
-    def is_game_foreground(self) -> bool:
-        return (
-            self._hwnd is not None and self._user32.GetForegroundWindow() == self._hwnd
-        )
-
-    def _client_rect(self, hwnd: int) -> tuple[int, int, int, int]:
-        from ctypes import wintypes
-
-        rect = wintypes.RECT()
-        if not self._user32.GetClientRect(hwnd, ctypes.byref(rect)):
-            raise ctypes.WinError()
-        origin = wintypes.POINT(rect.left, rect.top)
-        far_corner = wintypes.POINT(rect.right, rect.bottom)
-        if not self._user32.ClientToScreen(hwnd, ctypes.byref(origin)):
-            raise ctypes.WinError()
-        if not self._user32.ClientToScreen(hwnd, ctypes.byref(far_corner)):
-            raise ctypes.WinError()
-        return origin.x, origin.y, far_corner.x, far_corner.y
+        return np.asarray(shot, dtype=np.uint8)[:, :, :3]

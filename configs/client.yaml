@@ -1,7 +1,12 @@
 client:
   # null = automatically discover the server on the local network.
   server_url: null
-  window_title: MapleStory
+  # Match the executable name shown in Task Manager; .exe is optional.
+  process_name: Maplestory_Classic
+  # Optional title filter. Keep null unless the process owns multiple windows.
+  window_title: null
+  # print_window captures an obscured/background window without taking focus.
+  capture_backend: print_window
   fps: 12
   jpeg_quality: 75
   heartbeat_interval_ms: 300
@@ -33,4 +38,5 @@ input:
     HP_POTION: "1"
     MP_POTION: "2"
   tap_duration_ms: 45
-  require_game_foreground: true
+  mouse_tap_duration_ms: 45
+  allowed_mouse_buttons: [LEFT]

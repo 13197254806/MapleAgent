@@ -25,7 +25,8 @@ from ..models import (
     encode_frame,
 )
 from .capture import WindowCapture
-from .input import ActionExecutor, Win32Keyboard, emergency_key_pressed
+from .input import ActionExecutor, Win32WindowInput, emergency_key_pressed
+from .window import TargetWindow
 
 LOGGER = logging.getLogger(__name__)
 
@@ -62,21 +63,18 @@ class ClientRuntime:
     def __init__(self, config: ClientAppConfig):
         self.config = config
         self.session_id = str(uuid.uuid4())
-        self.keyboard = Win32Keyboard()
+        self.target = TargetWindow(
+            config.client.process_name, config.client.window_title
+        )
+        self.input = Win32WindowInput(self.target)
         self.capture = WindowCapture(
-            config.client.window_title,
+            self.target,
             config.frame.width,
             config.frame.height,
             config.client.jpeg_quality,
+            config.client.capture_backend,
         )
-        foreground_check = (
-            self.capture.is_game_foreground
-            if config.input.require_game_foreground
-            else None
-        )
-        self.executor = ActionExecutor(
-            self.session_id, config.input, self.keyboard, foreground_check
-        )
+        self.executor = ActionExecutor(self.session_id, config.input, self.input)
         self.shutdown = asyncio.Event()
         self.last_frame_id = -1
         self.last_server_message_ms = monotonic_ms()
@@ -89,7 +87,7 @@ class ClientRuntime:
             while not self.shutdown.is_set():
                 try:
                     await self._run_connection()
-                except (OSError, ConnectionClosed, TimeoutError) as exc:
+                except (OSError, ConnectionClosed, RuntimeError, TimeoutError) as exc:
                     LOGGER.warning("connection ended: %s", exc)
                 finally:
                     self.executor.emergency_stop()
@@ -104,17 +102,16 @@ class ClientRuntime:
     async def _run_connection(self) -> None:
         self.executor.emergency_stop()
         self.session_id = str(uuid.uuid4())
-        foreground_check = (
-            self.capture.is_game_foreground
-            if self.config.input.require_game_foreground
-            else None
-        )
-        self.executor = ActionExecutor(
-            self.session_id, self.config.input, self.keyboard, foreground_check
-        )
+        self.executor = ActionExecutor(self.session_id, self.config.input, self.input)
         self.last_frame_id = -1
         server_url = await self._resolve_server_url()
         url = f"{server_url.rstrip('/')}/{self.session_id}"
+        LOGGER.info(
+            "target process=%s hwnd=0x%X capture=%s",
+            self.config.client.process_name,
+            self.target.hwnd,
+            self.config.client.capture_backend,
+        )
         async with connect(url, max_size=self.config.frame.max_bytes) as websocket:
             sender = WireSender(websocket, self.session_id)
             await sender.send_model(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass, field
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -24,6 +25,22 @@ from ..perception import Perception, decode_jpeg
 from ..persistence import MySQLPersistence
 from ..recorder import Recorder
 from ..world import WorldStateBuilder
+
+LOGGER = logging.getLogger(__name__)
+
+_WARNING_EVENTS = {
+    "heartbeat_timeout",
+    "session_error",
+    "client_error",
+    "unexpected_plan_ack",
+    "expired_frame",
+}
+_INFO_EVENTS = {
+    "client_connected",
+    "client_disconnected",
+    "client_stop",
+    "session_closed",
+}
 
 
 @dataclass
@@ -87,8 +104,9 @@ class SessionContext:
         except WebSocketDisconnect:
             self.close_status = "disconnected"
             self._event("client_disconnected")
-        except Exception as exc:  # noqa: BLE001 - session boundary must fail closed
+        except Exception as exc:
             self.close_status = "error"
+            LOGGER.exception("session=%s failed", self.session_id)
             self._event("session_error", error=type(exc).__name__, detail=str(exc))
             await self._safe_send_error("SESSION_ERROR", str(exc))
         finally:
@@ -160,6 +178,16 @@ class SessionContext:
         world.current_fsm_state = decision.state
         self.recorder.record_world(world)
         self.recorder.record_decision(decision)
+        if decision.state != decision.previous_state:
+            LOGGER.info(
+                "session=%s FSM %s -> %s frame=%s intent=%s reason=%s",
+                self.session_id,
+                decision.previous_state,
+                decision.state,
+                decision.frame_id,
+                decision.intent.type,
+                decision.intent.reason,
+            )
         self.recorder.record_metric(
             "frame_processed",
             frame_id=header.frame_id,
@@ -177,6 +205,14 @@ class SessionContext:
         self.decision.commit(decision)
         self.pending_plan_id = plan.plan_id
         self.database.record_plan(plan, decision)
+        LOGGER.debug(
+            "session=%s plan=%s frame=%s ttl_ms=%s actions=%s",
+            self.session_id,
+            plan.plan_id,
+            plan.based_on_frame_id,
+            plan.ttl_ms,
+            len(plan.actions),
+        )
         await self.websocket.send_text(plan.model_dump_json())
 
     async def _handle_text(self, raw: str) -> None:
@@ -187,6 +223,14 @@ class SessionContext:
             return
         if isinstance(message, PlanAck):
             self.database.record_ack(message)
+            if message.status != AckStatus.EXECUTED:
+                LOGGER.warning(
+                    "session=%s plan=%s ack=%s detail=%s",
+                    self.session_id,
+                    message.plan_id,
+                    message.status,
+                    message.detail,
+                )
             self._event(
                 "plan_ack",
                 plan_id=message.plan_id,
@@ -235,6 +279,14 @@ class SessionContext:
 
     def _event(self, event_type: str, **fields: object) -> None:
         self.database.record_event(self.session_id, event_type, **fields)
+        if event_type in _WARNING_EVENTS:
+            LOGGER.warning(
+                "session=%s event=%s %s", self.session_id, event_type, fields
+            )
+        elif event_type in _INFO_EVENTS:
+            LOGGER.info("session=%s event=%s %s", self.session_id, event_type, fields)
+        else:
+            LOGGER.debug("session=%s event=%s %s", self.session_id, event_type, fields)
 
     async def _send_stop(self, reason: str) -> None:
         message = StopMessage(
@@ -295,6 +347,11 @@ class SessionManager:
     async def handle(self, websocket: WebSocket, session_id: str) -> None:
         async with self._lock:
             if self._active_session_id is not None:
+                LOGGER.warning(
+                    "rejecting session=%s because session=%s is active",
+                    session_id,
+                    self._active_session_id,
+                )
                 await websocket.close(code=1013, reason="V1 allows only one client")
                 return
             self._active_session_id = session_id
@@ -302,6 +359,9 @@ class SessionManager:
         try:
             await websocket.accept()
             recorder = Recorder(self.config.recorder.root_dir, session_id, self.config)
+            LOGGER.info(
+                "accepted session=%s recording=%s", session_id, recorder.session_dir
+            )
             self.database.open_session(session_id, self.config, recorder.session_dir)
             context = SessionContext(
                 session_id=session_id,

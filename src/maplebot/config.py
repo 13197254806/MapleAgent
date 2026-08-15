@@ -35,7 +35,10 @@ class ServerConfig(StrictModel):
 class ClientConfig(StrictModel):
     # Null means discover the server automatically on the local network.
     server_url: str | None = None
-    window_title: str = "MapleStory"
+    process_name: str = Field(default="Maplestory_Classic", min_length=1)
+    # Optional extra filter when one process owns more than one top-level window.
+    window_title: str | None = None
+    capture_backend: Literal["print_window", "screen"] = "print_window"
     fps: int = Field(default=12, ge=1, le=30)
     jpeg_quality: int = Field(default=75, ge=20, le=95)
     heartbeat_interval_ms: int = Field(default=300, ge=100, le=5000)
@@ -105,7 +108,10 @@ class InputConfig(StrictModel):
         }
     )
     tap_duration_ms: int = Field(default=45, ge=10, le=200)
-    require_game_foreground: bool = True
+    mouse_tap_duration_ms: int = Field(default=45, ge=10, le=200)
+    allowed_mouse_buttons: set[Literal["LEFT", "RIGHT", "MIDDLE"]] = Field(
+        default_factory=lambda: {"LEFT"}
+    )
 
     @field_validator("bindings")
     @classmethod
@@ -191,6 +197,15 @@ class RecorderConfig(StrictModel):
     save_every_nth_frame: int = Field(default=1, ge=1)
 
 
+class LoggingConfig(StrictModel):
+    level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    console: bool = True
+    file: Path | None = Path("../logs/server.log")
+    max_bytes: int = Field(default=10_000_000, ge=100_000)
+    backup_count: int = Field(default=5, ge=1, le=50)
+    access_log: bool = False
+
+
 class MapConfig(StrictModel):
     path: Path = Path("maps/example_map.json")
     node_snap_distance: float = Field(default=16, gt=0)
@@ -205,6 +220,7 @@ class ServerAppConfig(StrictModel):
     perception: PerceptionConfig = Field(default_factory=PerceptionConfig)
     control: ControlConfig = Field(default_factory=ControlConfig)
     recorder: RecorderConfig = Field(default_factory=RecorderConfig)
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
     map: MapConfig = Field(default_factory=MapConfig)
 
 
@@ -235,6 +251,8 @@ def load_server_config(path: str | Path = "configs/server.yaml") -> ServerAppCon
             base, config.perception.detector.model_path
         )
     config.recorder.root_dir = _resolve(base, config.recorder.root_dir)
+    if config.logging.file:
+        config.logging.file = _resolve(base, config.logging.file)
     config.map.path = _resolve(base, config.map.path)
     return config
 

@@ -4,4 +4,5 @@ __pycache__/
 .ruff_cache/
 .coverage
 recordings/
+logs/
 *.onnx

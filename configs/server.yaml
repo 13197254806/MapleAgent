@@ -71,6 +71,14 @@ recorder:
   root_dir: ../recordings
   save_every_nth_frame: 1
 
+logging:
+  level: INFO
+  console: true
+  file: ../logs/server.log
+  max_bytes: 10000000
+  backup_count: 5
+  access_log: false
+
 map:
   path: ../maps/example_map.json
   node_snap_distance: 18
