@@ -1,0 +1,36 @@
+client:
+  # null = automatically discover the server on the local network.
+  server_url: null
+  window_title: MapleStory
+  fps: 12
+  jpeg_quality: 75
+  heartbeat_interval_ms: 300
+  watchdog_timeout_ms: 1000
+  emergency_key: F12
+  reconnect_delay_ms: 1000
+
+frame:
+  width: 1280
+  height: 720
+  max_bytes: 2000000
+
+discovery:
+  enabled: true
+  service_name: maple-agent-v1
+  port: 8764
+  broadcast_addresses: [255.255.255.255]
+  timeout_ms: 500
+  attempts: 3
+
+input:
+  bindings:
+    LEFT: LEFT
+    RIGHT: RIGHT
+    UP: UP
+    DOWN: DOWN
+    JUMP: SPACE
+    ATTACK: X
+    HP_POTION: "1"
+    MP_POTION: "2"
+  tap_duration_ms: 45
+  require_game_foreground: true

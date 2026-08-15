@@ -8,7 +8,7 @@ from typing import Any
 import cv2
 
 from .clock import epoch_ms
-from .config import AppConfig
+from .config import ServerAppConfig
 from .decision import ActionPlanner, DecisionEngine
 from .map_service import MapService
 from .models import PerceptionResult, WorldState
@@ -18,11 +18,11 @@ from .world import WorldStateBuilder
 
 
 def replay_session(
-    session_dir: str | Path, config_override: AppConfig | None = None
+    session_dir: str | Path, config_override: ServerAppConfig | None = None
 ) -> dict[str, Any]:
     session_path = Path(session_dir).expanduser().resolve()
     metadata = json.loads((session_path / "session.json").read_text(encoding="utf-8"))
-    config = config_override or AppConfig.model_validate(metadata["config"])
+    config = config_override or ServerAppConfig.model_validate(metadata["config"])
     map_service = MapService.load(config.map.path, config.map.node_snap_distance)
     perception_engine = Perception(config.perception)
     world_builder = WorldStateBuilder(config.perception, map_service)

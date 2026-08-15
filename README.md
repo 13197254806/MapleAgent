@@ -27,11 +27,14 @@ src/maplebot/
   world.py       连续帧状态融合
   map_service.py 地图图模型、导航查询和 Mapping Trace
   decision.py    FSM、战斗、导航和 ActionPlanner
-  recorder.py    会话记录
+  recorder.py    回放数据文件记录
+  persistence.py MySQL 会话与控制审计
   replay.py      离线重放与差异统计
   discovery.py   UDP 局域网服务发现
-config.yaml      统一配置
+configs/client.yaml  Windows 客户端配置
+configs/server.yaml  服务端、CV、地图和数据库配置
 environment.yml  Conda 环境 maple_agent
+docs/mysql_schema.sql  MySQL 建库建表 SQL
 maps/            单地图 JSON
 assets/templates 固定分辨率模板
 ```
@@ -59,16 +62,21 @@ python -m pip install -e ".[onnx]"
 
 客户端依赖 `mss`，窗口必须处于可见状态；V1 不尝试捕获被完全遮挡或最小化的硬件加速画面。
 
-## 首次配置
+## 配置
 
-复制 `config.yaml` 为不入库的 `config.local.yaml`，至少修改：
+客户端和服务端配置已经分开，不需要复制或传递配置路径：
 
-1. 保持 `client.server_url: null`，让客户端自动发现局域网服务端。
-2. `client.window_title`：目标窗口标题中稳定的一段文本。
-3. `input.bindings`：逻辑动作到实际按键的映射。服务端无法下发此表之外的键。
-4. `perception.rois`：按缩放后画面的归一化坐标 `[x, y, width, height]` 标定小地图、HP、MP。
-5. HSV 范围和模板阈值。OpenCV HSV 范围为 H `0～180`、S/V `0～255`。
-6. `control.mode: mapping`，先禁止自动输入并采集地图轨迹。
+- `configs/client.yaml`：游戏窗口、画面发送、服务发现和按键；
+- `configs/server.yaml`：监听端口、画面规格、CV、控制、地图、Recorder 和 MySQL。
+
+首次运行至少修改：
+
+1. 客户端保持 `client.server_url: null`，自动发现局域网服务端。
+2. 客户端 `window_title` 和 `input.bindings` 与实际游戏一致。
+3. 两个配置文件的 `frame.width / height / max_bytes` 必须一致。
+4. 服务端 `perception.rois` 使用归一化坐标标定小地图、HP、MP。
+5. 服务端调整 HSV 范围和模板阈值。OpenCV HSV 范围为 H `0～180`、S/V `0～255`。
+6. 首次采集将服务端 `control.mode` 改成 `mapping`。
 
 模板使用固定分辨率截图裁剪，文件名必须以类别开头，例如：
 
@@ -81,22 +89,43 @@ assets/templates/blocking_dialog_default.png
 
 如改用 ONNX，将 `backend` 设为 `onnx` 并填写 `model_path`。适配器支持常见的 `Nx6`（xyxy、置信度、类别）以及 YOLOv8 风格输出；实际导出模型应先用 Replay 校验坐标和类别顺序。
 
-## 启动
+## MySQL 初始化
 
-先复制配置并启动服务端：
+服务端默认连接本机 MySQL 的 `maple_agent` 数据库。先执行版本化建表脚本：
 
 ```bash
-cp config.yaml config.local.yaml
-conda activate maple_agent
-python -m maplebot.server --config config.local.yaml
+mysql -h 127.0.0.1 -P 3306 -u root -p < docs/mysql_schema.sql
 ```
 
-Windows PowerShell 使用：
+密码不写入 YAML 或源码。将其一次性保存到服务端的 Conda 环境变量：
+
+```bash
+conda env config vars set -n maple_agent MAPLE_AGENT_MYSQL_PASSWORD='<本地 MySQL 密码>'
+conda deactivate
+conda activate maple_agent
+```
+
+MySQL 连接项位于 `configs/server.yaml`。如果临时不需要数据库，可设置：
+
+```yaml
+database:
+  enabled: false
+```
+
+## 启动
+
+服务端直接启动：
+
+```bash
+conda activate maple_agent
+python -m maplebot.server
+```
+
+Windows 客户端直接启动：
 
 ```powershell
-Copy-Item config.yaml config.local.yaml
 conda activate maple_agent
-python -m maplebot.client --config config.local.yaml
+python -m maplebot.client
 ```
 
 客户端启动时会自动查找服务端，不再需要配置 IP。也可以直接运行脚本；脚本通过 `conda run -n maple_agent` 使用指定环境：
@@ -110,11 +139,21 @@ python -m maplebot.client --config config.local.yaml
 .\scripts\run-client.ps1
 ```
 
-健康检查仍为 `GET http://服务端地址:8765/health`。
+高级排查时仍可用 `--config` 指向其他文件，但日常启动不需要任何参数。健康检查 `GET http://服务端地址:8765/health` 会同时返回服务发现和数据库连接状态。
 
 ## 局域网服务发现
 
-默认配置：
+服务端 `configs/server.yaml`：
+
+```yaml
+discovery:
+  enabled: true
+  service_name: maple-agent-v1
+  bind_host: 0.0.0.0
+  port: 8764
+```
+
+客户端 `configs/client.yaml`：
 
 ```yaml
 client:
@@ -123,7 +162,6 @@ client:
 discovery:
   enabled: true
   service_name: maple-agent-v1
-  bind_host: 0.0.0.0
   port: 8764
   broadcast_addresses: [255.255.255.255]
   timeout_ms: 500
@@ -173,7 +211,18 @@ V1 只接受第一个名称匹配的服务端，服务发现本身不提供身�
 
 确认地图后，把 `map.path` 指向新文件，再把 `control.mode` 改为 `patrol`。
 
-## Recorder 与 Replay
+## MySQL、Recorder 与 Replay
+
+持久化按用途拆分：
+
+| 数据 | 存储位置 | 原因 |
+|---|---|---|
+| 会话生命周期、客户端版本、结束状态 | MySQL `sessions` | 适合查询和统计 |
+| 连接、异常、超时、ACK 等重要事件 | MySQL `session_events` | 适合按时间和类型检索 |
+| ActionPlan 内容和执行 ACK | MySQL `action_plans` | 控制审计和执行结果关联 |
+| JPEG、感知、WorldState、决策 | 会话目录 | Replay 顺序读取和 CV 调试 |
+| 每帧处理耗时、画面年龄 | `metrics.jsonl` | 高频调试数据，不挤占数据库 |
+| Mapping 候选图 | 会话目录 | 需要人工编辑和版本管理 |
 
 每次连接创建 `recordings/<时间>-<session_id>/`：
 
@@ -184,8 +233,7 @@ frames.jsonl
 perception.jsonl
 world_state.jsonl
 decisions.jsonl
-action_plans.jsonl
-events.jsonl
+metrics.jsonl
 ```
 
 离线重放不连接游戏客户端，也不会执行按键：
@@ -196,7 +244,7 @@ python -m maplebot.replay recordings/<session-directory>
 
 新输出位于该会话的 `replays/<时间>/`，包含重新生成的四条 JSONL 和 `summary.json`。摘要会比较玩家/怪物检测数、地图节点、FSM 状态和意图。为了让逐帧状态机可直接比较，回归录制建议保持 `save_every_nth_frame: 1`。
 
-`events.jsonl` 中的 `frame_processed` 同时记录服务端处理耗时和校正时钟后的画面年龄，可用于检查 150 ms 延迟目标。
+`metrics.jsonl` 中的 `frame_processed` 同时记录服务端处理耗时和校正时钟后的画面年龄，可用于检查 150 ms 延迟目标。MySQL 表定义和索引见 `docs/mysql_schema.sql`。
 
 ## 协议与安全行为
 

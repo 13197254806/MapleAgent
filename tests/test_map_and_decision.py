@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from maplebot.config import AppConfig
+from maplebot.config import ServerAppConfig
 from maplebot.decision import ActionPlanner, DecisionEngine, IntentType
 from maplebot.map_service import MapService
 from maplebot.models import EdgeAction, FSMState, MonsterState, Point, WorldState
@@ -21,7 +21,7 @@ def world(**changes: object) -> WorldState:
     return WorldState(**values)
 
 
-def test_map_returns_first_path_edge(app_config: AppConfig) -> None:
+def test_map_returns_first_path_edge(app_config: ServerAppConfig) -> None:
     service = MapService.load(app_config.map.path, app_config.map.node_snap_distance)
     edge = service.next_edge("a", "c")
     assert edge is not None
@@ -32,7 +32,7 @@ def test_map_returns_first_path_edge(app_config: AppConfig) -> None:
     assert reverse.action == EdgeAction.WALK_LEFT
 
 
-def test_fsm_combat_and_stop_are_safe(app_config: AppConfig) -> None:
+def test_fsm_combat_and_stop_are_safe(app_config: ServerAppConfig) -> None:
     service = MapService.load(app_config.map.path)
     engine = DecisionEngine(app_config.control, service, player_missing_limit=2)
     combat_world = world(
@@ -49,7 +49,9 @@ def test_fsm_combat_and_stop_are_safe(app_config: AppConfig) -> None:
     assert still_stopped.state == FSMState.STOPPED
 
 
-def test_action_plan_is_short_and_based_on_frame(app_config: AppConfig) -> None:
+def test_action_plan_is_short_and_based_on_frame(
+    app_config: ServerAppConfig,
+) -> None:
     service = MapService.load(app_config.map.path)
     engine = DecisionEngine(app_config.control, service, player_missing_limit=2)
     state = world()

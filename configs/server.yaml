@@ -3,42 +3,28 @@ server:
   port: 8765
   heartbeat_timeout_ms: 1000
   max_frame_age_ms: 1200
-  max_frame_bytes: 2000000
 
-client:
-  # null = automatically discover the server on the local network.
-  server_url: null
-  window_title: MapleStory
-  target_width: 1280
-  target_height: 720
-  fps: 12
-  jpeg_quality: 75
-  heartbeat_interval_ms: 300
-  watchdog_timeout_ms: 1000
-  emergency_key: F12
-  reconnect_delay_ms: 1000
+frame:
+  width: 1280
+  height: 720
+  max_bytes: 2000000
 
 discovery:
   enabled: true
   service_name: maple-agent-v1
   bind_host: 0.0.0.0
   port: 8764
-  broadcast_addresses: [255.255.255.255]
-  timeout_ms: 500
-  attempts: 3
 
-input:
-  bindings:
-    LEFT: LEFT
-    RIGHT: RIGHT
-    UP: UP
-    DOWN: DOWN
-    JUMP: SPACE
-    ATTACK: X
-    HP_POTION: "1"
-    MP_POTION: "2"
-  tap_duration_ms: 45
-  require_game_foreground: true
+database:
+  enabled: true
+  host: 127.0.0.1
+  port: 3306
+  user: root
+  password: null
+  password_env: MAPLE_AGENT_MYSQL_PASSWORD
+  database: maple_agent
+  connect_timeout_seconds: 5
+  queue_capacity: 10000
 
 perception:
   rois:
@@ -48,7 +34,7 @@ perception:
   detector:
     backend: template
     model_path: null
-    templates_dir: assets/templates
+    templates_dir: ../assets/templates
     confidence_threshold: 0.72
     nms_threshold: 0.40
     input_width: 640
@@ -82,10 +68,10 @@ control:
   mp_potion_threshold: 0.20
 
 recorder:
-  root_dir: recordings
+  root_dir: ../recordings
   save_every_nth_frame: 1
 
 map:
-  path: maps/example_map.json
+  path: ../maps/example_map.json
   node_snap_distance: 18
   mapping_node_distance: 20

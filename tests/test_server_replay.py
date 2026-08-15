@@ -5,15 +5,15 @@ import numpy as np
 from fastapi.testclient import TestClient
 
 from maplebot.clock import epoch_ms
-from maplebot.config import AppConfig
+from maplebot.config import ServerAppConfig
 from maplebot.models import FrameHeader, HelloMessage, encode_frame
 from maplebot.replay import replay_session
 from maplebot.server.app import create_app
 
 
-def test_websocket_pipeline_records_and_replays(app_config: AppConfig) -> None:
-    app_config.client.target_width = 160
-    app_config.client.target_height = 90
+def test_websocket_pipeline_records_and_replays(app_config: ServerAppConfig) -> None:
+    app_config.frame.width = 160
+    app_config.frame.height = 90
     app = create_app(app_config)
     session_id = "integration"
     frame = np.zeros((90, 160, 3), dtype=np.uint8)
@@ -49,6 +49,9 @@ def test_websocket_pipeline_records_and_replays(app_config: AppConfig) -> None:
     session_dir = sessions[0]
     assert (session_dir / "frames.jsonl").is_file()
     assert (session_dir / "frames" / "0000000000.jpg").is_file()
+    assert (session_dir / "metrics.jsonl").is_file()
+    assert not (session_dir / "events.jsonl").exists()
+    assert not (session_dir / "action_plans.jsonl").exists()
     summary = replay_session(session_dir)
     assert summary["frames_replayed"] == 1
     assert summary["missing_recorded_frames"] == 0

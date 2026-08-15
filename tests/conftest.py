@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from maplebot.config import AppConfig
+from maplebot.config import ServerAppConfig
 
 
 @pytest.fixture
@@ -45,13 +45,13 @@ def map_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def app_config(tmp_path: Path, map_path: Path) -> AppConfig:
-    config = AppConfig()
+def app_config(tmp_path: Path, map_path: Path) -> ServerAppConfig:
+    config = ServerAppConfig()
     config.map.path = map_path
     config.map.node_snap_distance = 12
     config.recorder.root_dir = tmp_path / "recordings"
     config.discovery.enabled = False
-    config.client.server_url = "ws://127.0.0.1:8765/ws"
+    config.database.enabled = False
     config.perception.detector.backend = "none"
     config.perception.smoothing_window = 3
     config.perception.player_missing_limit = 2

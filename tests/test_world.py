@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from maplebot.config import AppConfig
+from maplebot.config import ServerAppConfig
 from maplebot.map_service import MapService
 from maplebot.models import Box, Detection, PerceptionResult, Point
 from maplebot.world import WorldStateBuilder
@@ -28,7 +28,7 @@ def perception(frame: int, x: float | None) -> PerceptionResult:
     )
 
 
-def test_world_smooths_and_counts_missing(app_config: AppConfig) -> None:
+def test_world_smooths_and_counts_missing(app_config: ServerAppConfig) -> None:
     service = MapService.load(app_config.map.path, app_config.map.node_snap_distance)
     builder = WorldStateBuilder(app_config.perception, service)
     builder.update(perception(1, 10))

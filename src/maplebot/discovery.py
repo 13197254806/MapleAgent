@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from .config import DiscoveryConfig
+from .config import DiscoveryClientConfig, DiscoveryServerConfig
 
 LOGGER = logging.getLogger(__name__)
 PROTOCOL_VERSION = 1
@@ -117,7 +117,7 @@ def parse_discovery_offer(
     )
 
 
-def discover_server(config: DiscoveryConfig) -> DiscoveredServer:
+def discover_server(config: DiscoveryClientConfig) -> DiscoveredServer:
     """Discover the first matching IPv4 server that replies on the LAN."""
 
     nonce = secrets.token_hex(16)
@@ -161,7 +161,7 @@ def discover_server(config: DiscoveryConfig) -> DiscoveredServer:
 class DiscoveryResponder(asyncio.DatagramProtocol):
     def __init__(
         self,
-        config: DiscoveryConfig,
+        config: DiscoveryServerConfig,
         websocket_port: int,
         websocket_path: str = "/ws",
     ):
@@ -198,7 +198,7 @@ class DiscoveryResponder(asyncio.DatagramProtocol):
 
 
 class DiscoveryService:
-    def __init__(self, config: DiscoveryConfig, websocket_port: int):
+    def __init__(self, config: DiscoveryServerConfig, websocket_port: int):
         self.config = config
         self.protocol = DiscoveryResponder(config, websocket_port)
         self._transport: asyncio.DatagramTransport | None = None

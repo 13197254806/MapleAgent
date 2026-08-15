@@ -9,8 +9,8 @@ from typing import Any
 from pydantic import BaseModel
 
 from .clock import epoch_ms
-from .config import AppConfig
-from .models import ActionPlan, FrameHeader, PerceptionResult, WorldState
+from .config import ServerAppConfig
+from .models import FrameHeader, PerceptionResult, WorldState
 
 
 class Recorder:
@@ -19,11 +19,10 @@ class Recorder:
         "perception",
         "world_state",
         "decisions",
-        "action_plans",
-        "events",
+        "metrics",
     )
 
-    def __init__(self, root: Path, session_id: str, config: AppConfig):
+    def __init__(self, root: Path, session_id: str, config: ServerAppConfig):
         safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", session_id)[:80]
         self.session_dir = root / f"{epoch_ms()}-{safe_id}"
         self.frames_dir = self.session_dir / "frames"
@@ -37,7 +36,7 @@ class Recorder:
             for name in self.STREAMS
         }
         session = {
-            "schema_version": 1,
+            "schema_version": 2,
             "session_id": session_id,
             "created_at_ms": epoch_ms(),
             "config": config.model_dump(mode="json"),
@@ -62,11 +61,8 @@ class Recorder:
     def record_decision(self, value: BaseModel) -> None:
         self._append("decisions", value)
 
-    def record_plan(self, value: ActionPlan) -> None:
-        self._append("action_plans", value)
-
-    def event(self, name: str, **fields: Any) -> None:
-        self._append("events", {"at_ms": epoch_ms(), "event": name, **fields})
+    def record_metric(self, name: str, **fields: Any) -> None:
+        self._append("metrics", {"at_ms": epoch_ms(), "metric": name, **fields})
 
     def close(self) -> None:
         with self._lock:

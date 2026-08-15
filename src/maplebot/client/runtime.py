@@ -11,7 +11,7 @@ from websockets.exceptions import ConnectionClosed
 
 from .. import __version__
 from ..clock import epoch_ms, monotonic_ms
-from ..config import AppConfig
+from ..config import ClientAppConfig
 from ..discovery import discover_server
 from ..models import (
     ActionPlan,
@@ -59,14 +59,14 @@ class WireSender:
 
 
 class ClientRuntime:
-    def __init__(self, config: AppConfig):
+    def __init__(self, config: ClientAppConfig):
         self.config = config
         self.session_id = str(uuid.uuid4())
         self.keyboard = Win32Keyboard()
         self.capture = WindowCapture(
             config.client.window_title,
-            config.client.target_width,
-            config.client.target_height,
+            config.frame.width,
+            config.frame.height,
             config.client.jpeg_quality,
         )
         foreground_check = (
@@ -115,15 +115,13 @@ class ClientRuntime:
         self.last_frame_id = -1
         server_url = await self._resolve_server_url()
         url = f"{server_url.rstrip('/')}/{self.session_id}"
-        async with connect(
-            url, max_size=self.config.server.max_frame_bytes
-        ) as websocket:
+        async with connect(url, max_size=self.config.frame.max_bytes) as websocket:
             sender = WireSender(websocket, self.session_id)
             await sender.send_model(
                 HelloMessage,
                 client_version=__version__,
-                target_width=self.config.client.target_width,
-                target_height=self.config.client.target_height,
+                target_width=self.config.frame.width,
+                target_height=self.config.frame.height,
             )
             self.last_server_message_ms = monotonic_ms()
             connection_stop = asyncio.Event()

@@ -3,7 +3,10 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from maplebot.config import AppConfig, DiscoveryConfig
+from maplebot.config import (
+    ClientAppConfig,
+    DiscoveryServerConfig,
+)
 from maplebot.discovery import (
     DiscoveryResponder,
     build_discovery_request,
@@ -20,7 +23,7 @@ class FakeDatagramTransport:
 
 
 def test_discovery_responder_returns_correlated_offer() -> None:
-    config = DiscoveryConfig(service_name="test-service")
+    config = DiscoveryServerConfig(service_name="test-service")
     responder = DiscoveryResponder(config, websocket_port=9876)
     transport = FakeDatagramTransport()
     responder.transport = transport  # type: ignore[assignment]
@@ -44,7 +47,7 @@ def test_discovery_responder_returns_correlated_offer() -> None:
 
 
 def test_discovery_ignores_wrong_service_and_nonce() -> None:
-    config = DiscoveryConfig(service_name="expected")
+    config = DiscoveryServerConfig(service_name="expected")
     responder = DiscoveryResponder(config, websocket_port=8765)
     transport = FakeDatagramTransport()
     responder.transport = transport  # type: ignore[assignment]
@@ -57,6 +60,6 @@ def test_discovery_ignores_wrong_service_and_nonce() -> None:
 
 def test_config_requires_discovery_or_manual_url() -> None:
     with pytest.raises(ValidationError):
-        AppConfig.model_validate(
+        ClientAppConfig.model_validate(
             {"client": {"server_url": None}, "discovery": {"enabled": False}}
         )
