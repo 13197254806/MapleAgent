@@ -1,0 +1,91 @@
+server:
+  host: 0.0.0.0
+  port: 8765
+  heartbeat_timeout_ms: 1000
+  max_frame_age_ms: 1200
+  max_frame_bytes: 2000000
+
+client:
+  # null = automatically discover the server on the local network.
+  server_url: null
+  window_title: MapleStory
+  target_width: 1280
+  target_height: 720
+  fps: 12
+  jpeg_quality: 75
+  heartbeat_interval_ms: 300
+  watchdog_timeout_ms: 1000
+  emergency_key: F12
+  reconnect_delay_ms: 1000
+
+discovery:
+  enabled: true
+  service_name: maple-agent-v1
+  bind_host: 0.0.0.0
+  port: 8764
+  broadcast_addresses: [255.255.255.255]
+  timeout_ms: 500
+  attempts: 3
+
+input:
+  bindings:
+    LEFT: LEFT
+    RIGHT: RIGHT
+    UP: UP
+    DOWN: DOWN
+    JUMP: SPACE
+    ATTACK: X
+    HP_POTION: "1"
+    MP_POTION: "2"
+  tap_duration_ms: 45
+  require_game_foreground: true
+
+perception:
+  rois:
+    minimap: [0.0, 0.0, 0.30, 0.30]
+    hp: [0.20, 0.94, 0.20, 0.025]
+    mp: [0.60, 0.94, 0.20, 0.025]
+  detector:
+    backend: template
+    model_path: null
+    templates_dir: assets/templates
+    confidence_threshold: 0.72
+    nms_threshold: 0.40
+    input_width: 640
+    input_height: 640
+    class_names: [player, monster, death_dialog, blocking_dialog]
+  minimap_player_hsv:
+    lower: [0, 0, 225]
+    upper: [180, 55, 255]
+  hp_hsv:
+    lower: [0, 120, 80]
+    upper: [12, 255, 255]
+  mp_hsv:
+    lower: [95, 100, 70]
+    upper: [135, 255, 255]
+  min_color_pixels: 4
+  smoothing_window: 5
+  player_missing_limit: 6
+  stuck_window_ms: 2500
+  stuck_distance_px: 4.0
+
+control:
+  mode: patrol
+  plan_ttl_ms: 800
+  walk_duration_ms: 180
+  attack_duration_ms: 220
+  recovery_duration_ms: 180
+  combat_range_px: 190
+  attack_cooldown_ms: 450
+  potion_cooldown_ms: 1000
+  hp_potion_threshold: 0.35
+  mp_potion_threshold: 0.20
+
+recorder:
+  root_dir: recordings
+  save_every_nth_frame: 1
+
+map:
+  path: maps/example_map.json
+  node_snap_distance: 18
+  mapping_node_distance: 20

@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "maplebot-v1"
+version = "0.1.0"
+description = "CV based short-horizon control loop for a single MapleStory client"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "numpy>=1.26,<3",
+  "opencv-python-headless>=4.9,<5",
+  "pydantic>=2.8,<3",
+  "PyYAML>=6.0,<7",
+  "uvicorn[standard]>=0.30,<1",
+  "websockets>=13,<16",
+]
+
+[project.optional-dependencies]
+client = ["mss>=9,<11"]
+onnx = ["onnxruntime>=1.18,<2"]
+dev = [
+  "pytest>=8,<9",
+  "pytest-asyncio>=0.24,<1",
+  "httpx>=0.27,<1",
+  "ruff>=0.9,<1",
+]
+
+[project.scripts]
+maplebot-server = "maplebot.server.__main__:main"
+maplebot-client = "maplebot.client.__main__:main"
+maplebot-replay = "maplebot.replay:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/maplebot"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

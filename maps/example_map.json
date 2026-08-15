@@ -1,0 +1,15 @@
+{
+  "name": "replace_with_fixed_map",
+  "minimap_width": 384,
+  "minimap_height": 216,
+  "nodes": [
+    {"id": "left", "x": 70, "y": 160, "radius": 24},
+    {"id": "center", "x": 190, "y": 160, "radius": 24},
+    {"id": "right", "x": 315, "y": 160, "radius": 24}
+  ],
+  "edges": [
+    {"source": "left", "target": "center", "action": "walk_right", "bidirectional": true},
+    {"source": "center", "target": "right", "action": "walk_right", "bidirectional": true}
+  ],
+  "patrol_route": ["left", "center", "right", "center"]
+}

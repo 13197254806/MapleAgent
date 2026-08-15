@@ -1,0 +1,199 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Literal
+
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+class StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class ServerConfig(StrictModel):
+    host: str = "0.0.0.0"
+    port: int = Field(default=8765, ge=1, le=65535)
+    heartbeat_timeout_ms: int = Field(default=1000, ge=250, le=10000)
+    max_frame_age_ms: int = Field(default=1200, ge=100, le=10000)
+    max_frame_bytes: int = Field(default=2_000_000, ge=10_000)
+
+
+class ClientConfig(StrictModel):
+    # Null means discover the server automatically on the local network.
+    server_url: str | None = None
+    window_title: str = "MapleStory"
+    target_width: int = Field(default=1280, gt=0)
+    target_height: int = Field(default=720, gt=0)
+    fps: int = Field(default=12, ge=1, le=30)
+    jpeg_quality: int = Field(default=75, ge=20, le=95)
+    heartbeat_interval_ms: int = Field(default=300, ge=100, le=5000)
+    watchdog_timeout_ms: int = Field(default=1000, ge=250, le=10000)
+    emergency_key: str = "F12"
+    reconnect_delay_ms: int = Field(default=1000, ge=100, le=30000)
+
+    @field_validator("server_url")
+    @classmethod
+    def websocket_url(cls, value: str | None) -> str | None:
+        if value is not None and not value.startswith(("ws://", "wss://")):
+            raise ValueError("client.server_url must start with ws:// or wss://")
+        return value
+
+
+class DiscoveryConfig(StrictModel):
+    enabled: bool = True
+    service_name: str = Field(default="maple-agent-v1", min_length=1, max_length=64)
+    bind_host: str = "0.0.0.0"
+    port: int = Field(default=8764, ge=1, le=65535)
+    broadcast_addresses: list[str] = Field(
+        default_factory=lambda: ["255.255.255.255"], min_length=1
+    )
+    timeout_ms: int = Field(default=500, ge=100, le=5000)
+    attempts: int = Field(default=3, ge=1, le=10)
+
+
+class InputConfig(StrictModel):
+    bindings: dict[str, str] = Field(
+        default_factory=lambda: {
+            "LEFT": "LEFT",
+            "RIGHT": "RIGHT",
+            "UP": "UP",
+            "DOWN": "DOWN",
+            "JUMP": "SPACE",
+            "ATTACK": "X",
+            "HP_POTION": "1",
+            "MP_POTION": "2",
+        }
+    )
+    tap_duration_ms: int = Field(default=45, ge=10, le=200)
+    require_game_foreground: bool = True
+
+    @field_validator("bindings")
+    @classmethod
+    def normalize_bindings(cls, value: dict[str, str]) -> dict[str, str]:
+        return {key.upper(): physical.upper() for key, physical in value.items()}
+
+
+class RoiConfig(StrictModel):
+    # Normalized x, y, width, height in the resized frame.
+    minimap: tuple[float, float, float, float] = (0.0, 0.0, 0.3, 0.3)
+    hp: tuple[float, float, float, float] = (0.20, 0.94, 0.20, 0.025)
+    mp: tuple[float, float, float, float] = (0.60, 0.94, 0.20, 0.025)
+
+    @field_validator("minimap", "hp", "mp")
+    @classmethod
+    def normalized_roi(
+        cls, value: tuple[float, float, float, float]
+    ) -> tuple[float, float, float, float]:
+        x, y, width, height = value
+        if (
+            min(value) < 0
+            or width <= 0
+            or height <= 0
+            or x + width > 1
+            or y + height > 1
+        ):
+            raise ValueError("ROI must be normalized and inside the frame")
+        return value
+
+
+class HSVRange(StrictModel):
+    lower: tuple[int, int, int]
+    upper: tuple[int, int, int]
+
+
+class DetectorConfig(StrictModel):
+    backend: Literal["none", "template", "onnx"] = "template"
+    model_path: Path | None = None
+    templates_dir: Path = Path("assets/templates")
+    confidence_threshold: float = Field(default=0.65, ge=0, le=1)
+    nms_threshold: float = Field(default=0.45, ge=0, le=1)
+    input_width: int = Field(default=640, gt=0)
+    input_height: int = Field(default=640, gt=0)
+    class_names: list[str] = Field(
+        default_factory=lambda: ["player", "monster", "death_dialog", "blocking_dialog"]
+    )
+
+
+class PerceptionConfig(StrictModel):
+    rois: RoiConfig = Field(default_factory=RoiConfig)
+    detector: DetectorConfig = Field(default_factory=DetectorConfig)
+    minimap_player_hsv: HSVRange = Field(
+        default_factory=lambda: HSVRange(lower=(0, 0, 225), upper=(180, 55, 255))
+    )
+    hp_hsv: HSVRange = Field(
+        default_factory=lambda: HSVRange(lower=(0, 120, 80), upper=(12, 255, 255))
+    )
+    mp_hsv: HSVRange = Field(
+        default_factory=lambda: HSVRange(lower=(95, 100, 70), upper=(135, 255, 255))
+    )
+    min_color_pixels: int = Field(default=4, ge=1)
+    smoothing_window: int = Field(default=5, ge=1, le=30)
+    player_missing_limit: int = Field(default=6, ge=1, le=100)
+    stuck_window_ms: int = Field(default=2500, ge=500, le=30000)
+    stuck_distance_px: float = Field(default=4.0, ge=0)
+
+
+class ControlConfig(StrictModel):
+    mode: Literal["patrol", "mapping"] = "patrol"
+    plan_ttl_ms: int = Field(default=800, ge=100, le=1000)
+    walk_duration_ms: int = Field(default=180, ge=20, le=700)
+    attack_duration_ms: int = Field(default=220, ge=20, le=700)
+    recovery_duration_ms: int = Field(default=180, ge=20, le=700)
+    combat_range_px: float = Field(default=190, gt=0)
+    attack_cooldown_ms: int = Field(default=450, ge=0, le=10000)
+    potion_cooldown_ms: int = Field(default=1000, ge=100, le=10000)
+    hp_potion_threshold: float = Field(default=0.35, ge=0, le=1)
+    mp_potion_threshold: float = Field(default=0.20, ge=0, le=1)
+
+
+class RecorderConfig(StrictModel):
+    root_dir: Path = Path("recordings")
+    save_every_nth_frame: int = Field(default=1, ge=1)
+
+
+class MapConfig(StrictModel):
+    path: Path = Path("maps/example_map.json")
+    node_snap_distance: float = Field(default=16, gt=0)
+    mapping_node_distance: float = Field(default=18, gt=0)
+
+
+class AppConfig(StrictModel):
+    server: ServerConfig = Field(default_factory=ServerConfig)
+    client: ClientConfig = Field(default_factory=ClientConfig)
+    discovery: DiscoveryConfig = Field(default_factory=DiscoveryConfig)
+    input: InputConfig = Field(default_factory=InputConfig)
+    perception: PerceptionConfig = Field(default_factory=PerceptionConfig)
+    control: ControlConfig = Field(default_factory=ControlConfig)
+    recorder: RecorderConfig = Field(default_factory=RecorderConfig)
+    map: MapConfig = Field(default_factory=MapConfig)
+
+    @model_validator(mode="after")
+    def client_has_endpoint_source(self) -> AppConfig:
+        if self.client.server_url is None and not self.discovery.enabled:
+            raise ValueError(
+                "enable discovery or configure client.server_url as a manual fallback"
+            )
+        return self
+
+
+def load_config(path: str | Path) -> AppConfig:
+    config_path = Path(path).expanduser().resolve()
+    with config_path.open("r", encoding="utf-8") as handle:
+        raw = yaml.safe_load(handle) or {}
+    config = AppConfig.model_validate(raw)
+    base = config_path.parent
+    config.perception.detector.templates_dir = _resolve(
+        base, config.perception.detector.templates_dir
+    )
+    if config.perception.detector.model_path:
+        config.perception.detector.model_path = _resolve(
+            base, config.perception.detector.model_path
+        )
+    config.recorder.root_dir = _resolve(base, config.recorder.root_dir)
+    config.map.path = _resolve(base, config.map.path)
+    return config
+
+
+def _resolve(base: Path, path: Path) -> Path:
+    return path if path.is_absolute() else (base / path).resolve()
