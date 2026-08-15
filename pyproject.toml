@@ -7,6 +7,8 @@ name = "maplebot-v1"
 version = "0.1.0"
 description = "CV based short-horizon control loop for a single MapleStory client"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115,<1",
